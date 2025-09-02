@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photo Booth Studio</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
+        .gradient-bg { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect } = React;
+        // Using emoji icons instead of lucide for simplicity
+
+        const PhotoBoothApp = () => {
+            const videoRef = useRef(null);
+            const canvasRef = useRef(null);
+            const [isStreaming, setIsStreaming] = useState(false);
+            const [photos, setPhotos] = useState([]);
+            const [currentFilter, setCurrentFilter] = useState('none');
+            const [showGallery, setShowGallery] = useState(false);
+            const [editingPhoto, setEditingPhoto] = useState(null);
+            const [newPhotoName, setNewPhotoName] = useState('');
+
+            const filters = [
+                { name: 'none', label: 'Original', style: 'filter: none;' },
+                { name: 'grayscale', label: 'B&W', style: 'filter: grayscale(100%);' },
+                { name: 'sepia', label: 'Vintage', style: 'filter: sepia(80%);' },
+                { name: 'blur', label: 'Soft', style: 'filter: blur(1px);' },
+                { name: 'brightness', label: 'Bright', style: 'filter: brightness(130%);' },
+                { name: 'contrast', label: 'Pop', style: 'filter: contrast(140%);' },
+                { name: 'hue', label: 'Rainbow', style: 'filter: hue-rotate(90deg);' },
+                { name: 'invert', label: 'Negative', style: 'filter: invert(100%);' }
+            ];
+
+            useEffect(() => {
+                startCamera();
+                return () => {
+                    if (videoRef.current && videoRef.current.srcObject) {
+                        videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+                    }
+                };
+            }, []);
+
+            const startCamera = async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { facingMode: 'user' }, 
+                        audio: false 
+                    });
+                    if (videoRef.current) {
+                        videoRef.current.srcObject = stream;
+                        videoRef.current.play();
+                        setIsStreaming(true);
+                    }
+                } catch (err) {
+                    console.error('Error accessing camera:', err);
+                }
+            };
+
+            const getFilterStyle = (filterName) => {
+                const filter = filters.find(f => f.name === filterName);
+                return filter ? filter.style : 'filter: none;';
+            };
+
+            const capturePhoto = () => {
+                if (!videoRef.current || !canvasRef.current) return;
+
+                const video = videoRef.current;
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+
+                ctx.scale(-1, 1);
+                ctx.translate(-canvas.width, 0);
+                ctx.filter = getFilterStyle(currentFilter).replace('filter: ', '').replace(';', '');
+                ctx.drawImage(video, 0, 0);
+
+                const imageDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                
+                const newPhoto = {
+                    id: Date.now(),
+                    name: `Photo ${photos.length + 1}`,
+                    url: imageDataUrl,
+                    filter: currentFilter,
+                    timestamp: new Date().toLocaleString(),
+                    size: Math.round(imageDataUrl.length * 0.75 / 1024)
+                };
+
+                setPhotos(prev => [newPhoto, ...prev]);
+                
+                // Flash effect
+                const flash = document.createElement('div');
+                flash.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:white;z-index:9999;pointer-events:none;';
+                document.body.appendChild(flash);
+                setTimeout(() => document.body.removeChild(flash), 100);
+            };
+
+            const deletePhoto = (id) => {
+                setPhotos(prev => prev.filter(photo => photo.id !== id));
+            };
+
+            const downloadPhoto = (photo) => {
+                const link = document.createElement('a');
+                link.download = `${photo.name}.jpg`;
+                link.href = photo.url;
+                link.click();
+            };
+
+            const updatePhotoName = (id, newName) => {
+                setPhotos(prev => prev.map(photo => 
+                    photo.id === id ? { ...photo, name: newName } : photo
+                ));
+                setEditingPhoto(null);
+                setNewPhotoName('');
+            };
+
+            return (
+                <div className="min-h-screen gradient-bg">
+                    <div className="container mx-auto px-4 py-8">
+                        <h1 className="text-4xl font-bold text-white text-center mb-8">
+                            📸 Photo Booth Studio
+                        </h1>
+
+                        {!showGallery ? (
+                            <div className="max-w-4xl mx-auto">
+                                <div className="relative bg-black rounded-2xl overflow-hidden shadow-2xl mb-6">
+                                    <video
+                                        ref={videoRef}
+                                        className="w-full h-auto"
+                                        style={{ 
+                                            minHeight: '400px',
+                                            transform: 'scaleX(-1)',
+                                            filter: getFilterStyle(currentFilter).replace('filter: ', '').replace(';', '')
+                                        }}
+                                        autoPlay
+                                        muted
+                                        playsInline
+                                    />
+                                    
+                                    {!isStreaming && (
+                                        <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
+                                            <div className="text-white text-center">
+                                                <div className="text-6xl mb-4">📷</div>
+                                                <p>Starting camera...</p>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {currentFilter !== 'none' && (
+                                        <div className="absolute top-4 left-4 bg-black bg-opacity-60 text-white px-3 py-1 rounded-full text-sm">
+                                            {filters.find(f => f.name === currentFilter)?.label}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="mb-6">
+                                    <h3 className="text-white text-lg font-semibold mb-3">Choose Filter:</h3>
+                                    <div className="flex flex-wrap gap-2 justify-center">
+                                        {filters.map(filter => (
+                                            <button
+                                                key={filter.name}
+                                                onClick={() => setCurrentFilter(filter.name)}
+                                                className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                                                    currentFilter === filter.name
+                                                        ? 'bg-white text-purple-900 shadow-lg'
+                                                        : 'bg-white bg-opacity-20 text-white hover:bg-opacity-30'
+                                                }`}
+                                            >
+                                                {filter.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="flex justify-center gap-4 mb-6">
+                                    <button
+                                        onClick={capturePhoto}
+                                        disabled={!isStreaming}
+                                        className="bg-pink-500 hover:bg-pink-600 text-white px-6 py-3 rounded-full font-semibold shadow-lg transition-all disabled:opacity-50"
+                                    >
+                                        📷 Take Photo
+                                    </button>
+                                    
+                                    <button
+                                        onClick={() => setShowGallery(true)}
+                                        className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-full font-semibold shadow-lg transition-all"
+                                    >
+                                        🖼️ Gallery ({photos.length})
+                                    </button>
+                                </div>
+
+                                {photos.length > 0 && (
+                                    <div className="bg-white bg-opacity-10 backdrop-blur-lg rounded-xl p-6">
+                                        <h3 className="text-white text-lg font-semibold mb-4">Recent Photos:</h3>
+                                        <div className="flex gap-4 overflow-x-auto pb-2">
+                                            {photos.slice(0, 5).map(photo => (
+                                                <div key={photo.id} className="flex-shrink-0">
+                                                    <img
+                                                        src={photo.url}
+                                                        alt={photo.name}
+                                                        className="w-20 h-20 object-cover rounded-lg shadow-md hover:shadow-lg cursor-pointer"
+                                                        onClick={() => setShowGallery(true)}
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="max-w-6xl mx-auto">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h2 className="text-2xl font-bold text-white">Photo Gallery</h2>
+                                    <button
+                                        onClick={() => setShowGallery(false)}
+                                        className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-full font-medium shadow-lg transition-all"
+                                    >
+                                        ↩️ Back to Camera
+                                    </button>
+                                </div>
+
+                                {photos.length === 0 ? (
+                                    <div className="text-center text-white py-16">
+                                        <div className="text-6xl mb-4">📷</div>
+                                        <p className="text-xl mb-2">No photos yet</p>
+                                        <p className="opacity-75">Take your first photo to get started!</p>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                                        {photos.map(photo => (
+                                            <div key={photo.id} className="bg-white bg-opacity-10 backdrop-blur-lg rounded-xl overflow-hidden shadow-lg hover:shadow-xl transition-all">
+                                                <img
+                                                    src={photo.url}
+                                                    alt={photo.name}
+                                                    className="w-full h-48 object-cover"
+                                                />
+                                                <div className="p-4">
+                                                    {editingPhoto === photo.id ? (
+                                                        <div className="mb-3">
+                                                            <input
+                                                                type="text"
+                                                                value={newPhotoName}
+                                                                onChange={(e) => setNewPhotoName(e.target.value)}
+                                                                placeholder={photo.name}
+                                                                className="w-full px-2 py-1 rounded bg-white bg-opacity-20 text-white placeholder-gray-300 border border-white border-opacity-30"
+                                                            />
+                                                            <div className="flex gap-2 mt-2">
+                                                                <button
+                                                                    onClick={() => updatePhotoName(photo.id, newPhotoName || photo.name)}
+                                                                    className="text-green-400 hover:text-green-300 text-sm"
+                                                                >
+                                                                    Save
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => {
+                                                                        setEditingPhoto(null);
+                                                                        setNewPhotoName('');
+                                                                    }}
+                                                                    className="text-gray-400 hover:text-gray-300 text-sm"
+                                                                >
+                                                                    Cancel
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="mb-3">
+                                                            <h3 className="text-white font-semibold text-lg">{photo.name}</h3>
+                                                            <p className="text-gray-300 text-sm">{photo.timestamp}</p>
+                                                            <p className="text-gray-400 text-xs">
+                                                                {photo.filter !== 'none' && `${filters.find(f => f.name === photo.filter)?.label} • `}
+                                                                {photo.size}KB
+                                                            </p>
+                                                        </div>
+                                                    )}
+
+                                                    <div className="flex gap-2 text-sm">
+                                                        <button
+                                                            onClick={() => downloadPhoto(photo)}
+                                                            className="text-blue-400 hover:text-blue-300"
+                                                        >
+                                                            ⬇️ Download
+                                                        </button>
+                                                        <button
+                                                            onClick={() => {
+                                                                setEditingPhoto(photo.id);
+                                                                setNewPhotoName(photo.name);
+                                                            }}
+                                                            className="text-yellow-400 hover:text-yellow-300"
+                                                        >
+                                                            ✏️ Rename
+                                                        </button>
+                                                        <button
+                                                            onClick={() => deletePhoto(photo.id)}
+                                                            className="text-red-400 hover:text-red-300"
+                                                        >
+                                                            🗑️ Delete
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    <canvas ref={canvasRef} style={{ display: 'none' }} />
+                </div>
+            );
+        };
+
+        ReactDOM.render(<PhotoBoothApp />, document.getElementById('root'));
+    </script>
+</body>
+</html>
