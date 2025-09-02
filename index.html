@@ -11,6 +11,38 @@
     <style>
         body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
         .gradient-bg { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .modal-overlay { 
+            background: rgba(0, 0, 0, 0.8); 
+            backdrop-filter: blur(10px);
+        }
+        .frame-classic { 
+            border: 20px solid #8B4513; 
+            border-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="%23654321" stroke="%23D2691E" stroke-width="2"/></svg>') 20;
+        }
+        .frame-modern {
+            box-shadow: inset 0 0 0 10px white, inset 0 0 0 15px #333;
+        }
+        .frame-vintage {
+            border: 15px solid #DAA520;
+            border-radius: 10px;
+            box-shadow: inset 0 0 0 5px #F5DEB3;
+        }
+        .frame-polaroid {
+            border: 20px solid white;
+            border-bottom-width: 60px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        .countdown {
+            font-size: 8rem;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            animation: pulse 1s ease-in-out;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); }
+        }
     </style>
 </head>
 <body>
@@ -18,17 +50,35 @@
 
     <script type="text/babel">
         const { useState, useRef, useEffect } = React;
-        // Using emoji icons instead of lucide for simplicity
 
         const PhotoBoothApp = () => {
             const videoRef = useRef(null);
             const canvasRef = useRef(null);
+            const [currentScreen, setCurrentScreen] = useState('home'); // home, camera, gallery
             const [isStreaming, setIsStreaming] = useState(false);
             const [photos, setPhotos] = useState([]);
             const [currentFilter, setCurrentFilter] = useState('none');
-            const [showGallery, setShowGallery] = useState(false);
             const [editingPhoto, setEditingPhoto] = useState(null);
             const [newPhotoName, setNewPhotoName] = useState('');
+            const [previewPhoto, setPreviewPhoto] = useState(null);
+            const [selectedLayout, setSelectedLayout] = useState('single');
+            const [selectedFrame, setSelectedFrame] = useState('none');
+            const [capturedPhotos, setCapturedPhotos] = useState([]);
+            const [countdown, setCountdown] = useState(0);
+
+            const layouts = [
+                { id: 'single', name: '1 Photo', grid: '1x1', photos: 1 },
+                { id: 'quad', name: '4 Photos', grid: '2x2', photos: 4 },
+                { id: 'strip', name: '6 Photos', grid: '2x3', photos: 6 }
+            ];
+
+            const frames = [
+                { id: 'none', name: 'No Frame', class: '' },
+                { id: 'classic', name: 'Classic Wood', class: 'frame-classic' },
+                { id: 'modern', name: 'Modern', class: 'frame-modern' },
+                { id: 'vintage', name: 'Vintage Gold', class: 'frame-vintage' },
+                { id: 'polaroid', name: 'Polaroid', class: 'frame-polaroid' }
+            ];
 
             const filters = [
                 { name: 'none', label: 'Original', style: 'filter: none;' },
@@ -42,18 +92,24 @@
             ];
 
             useEffect(() => {
-                startCamera();
+                if (currentScreen === 'camera') {
+                    startCamera();
+                }
                 return () => {
                     if (videoRef.current && videoRef.current.srcObject) {
                         videoRef.current.srcObject.getTracks().forEach(track => track.stop());
                     }
                 };
-            }, []);
+            }, [currentScreen]);
 
             const startCamera = async () => {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ 
-                        video: { facingMode: 'user' }, 
+                        video: { 
+                            facingMode: 'user',
+                            width: { ideal: 1920 },
+                            height: { ideal: 1080 }
+                        }, 
                         audio: false 
                     });
                     if (videoRef.current) {
@@ -71,6 +127,20 @@
                 return filter ? filter.style : 'filter: none;';
             };
 
+            const startCountdown = () => {
+                setCountdown(3);
+                const timer = setInterval(() => {
+                    setCountdown(prev => {
+                        if (prev <= 1) {
+                            clearInterval(timer);
+                            setTimeout(capturePhoto, 100);
+                            return 0;
+                        }
+                        return prev - 1;
+                    });
+                }, 1000);
+            };
+
             const capturePhoto = () => {
                 if (!videoRef.current || !canvasRef.current) return;
 
@@ -78,32 +148,94 @@
                 const canvas = canvasRef.current;
                 const ctx = canvas.getContext('2d');
 
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
+                // Set to 1080p resolution
+                canvas.width = 1920;
+                canvas.height = 1080;
 
                 ctx.scale(-1, 1);
                 ctx.translate(-canvas.width, 0);
                 ctx.filter = getFilterStyle(currentFilter).replace('filter: ', '').replace(';', '');
-                ctx.drawImage(video, 0, 0);
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
                 const imageDataUrl = canvas.toDataURL('image/jpeg', 0.9);
                 
-                const newPhoto = {
-                    id: Date.now(),
-                    name: `Photo ${photos.length + 1}`,
-                    url: imageDataUrl,
-                    filter: currentFilter,
-                    timestamp: new Date().toLocaleString(),
-                    size: Math.round(imageDataUrl.length * 0.75 / 1024)
-                };
-
-                setPhotos(prev => [newPhoto, ...prev]);
+                setCapturedPhotos(prev => {
+                    const newPhotos = [...prev, imageDataUrl];
+                    const layout = layouts.find(l => l.id === selectedLayout);
+                    
+                    if (newPhotos.length >= layout.photos) {
+                        // Create composite image
+                        createCompositeImage(newPhotos);
+                        setCapturedPhotos([]);
+                    }
+                    
+                    return newPhotos.length >= layout.photos ? [] : newPhotos;
+                });
                 
                 // Flash effect
                 const flash = document.createElement('div');
                 flash.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:white;z-index:9999;pointer-events:none;';
                 document.body.appendChild(flash);
                 setTimeout(() => document.body.removeChild(flash), 100);
+            };
+
+            const createCompositeImage = (photoUrls) => {
+                const compositeCanvas = document.createElement('canvas');
+                const ctx = compositeCanvas.getContext('2d');
+                const layout = layouts.find(l => l.id === selectedLayout);
+                
+                // Set composite canvas size
+                compositeCanvas.width = 1920;
+                compositeCanvas.height = 1080;
+                
+                // Fill background
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, compositeCanvas.width, compositeCanvas.height);
+                
+                const loadPromises = photoUrls.map(url => {
+                    return new Promise(resolve => {
+                        const img = new Image();
+                        img.onload = () => resolve(img);
+                        img.src = url;
+                    });
+                });
+                
+                Promise.all(loadPromises).then(images => {
+                    if (layout.id === 'single') {
+                        ctx.drawImage(images[0], 0, 0, compositeCanvas.width, compositeCanvas.height);
+                    } else if (layout.id === 'quad') {
+                        const w = compositeCanvas.width / 2;
+                        const h = compositeCanvas.height / 2;
+                        images.forEach((img, i) => {
+                            const x = (i % 2) * w;
+                            const y = Math.floor(i / 2) * h;
+                            ctx.drawImage(img, x, y, w, h);
+                        });
+                    } else if (layout.id === 'strip') {
+                        const w = compositeCanvas.width / 2;
+                        const h = compositeCanvas.height / 3;
+                        images.forEach((img, i) => {
+                            const x = (i % 2) * w;
+                            const y = Math.floor(i / 2) * h;
+                            ctx.drawImage(img, x, y, w, h);
+                        });
+                    }
+                    
+                    const finalImageUrl = compositeCanvas.toDataURL('image/jpeg', 0.9);
+                    
+                    const newPhoto = {
+                        id: Date.now(),
+                        name: `${layout.name} ${photos.length + 1}`,
+                        url: finalImageUrl,
+                        filter: currentFilter,
+                        frame: selectedFrame,
+                        layout: selectedLayout,
+                        timestamp: new Date().toLocaleString(),
+                        size: Math.round(finalImageUrl.length * 0.75 / 1024)
+                    };
+
+                    setPhotos(prev => [newPhoto, ...prev]);
+                });
             };
 
             const deletePhoto = (id) => {
@@ -125,19 +257,132 @@
                 setNewPhotoName('');
             };
 
-            return (
-                <div className="min-h-screen gradient-bg">
-                    <div className="container mx-auto px-4 py-8">
-                        <h1 className="text-4xl font-bold text-white text-center mb-8">
-                            📸 Photo Booth Studio
-                        </h1>
+            const startPhotoSession = () => {
+                setCurrentScreen('camera');
+                setCapturedPhotos([]);
+            };
 
-                        {!showGallery ? (
+            const getCurrentLayoutProgress = () => {
+                const layout = layouts.find(l => l.id === selectedLayout);
+                return `${capturedPhotos.length}/${layout.photos}`;
+            };
+
+            // Home Screen
+            if (currentScreen === 'home') {
+                return (
+                    <div className="min-h-screen gradient-bg">
+                        <div className="container mx-auto px-4 py-8">
+                            <h1 className="text-5xl font-bold text-white text-center mb-4">
+                                📸 Photo Booth Studio
+                            </h1>
+                            <p className="text-white text-center text-xl mb-12 opacity-80">
+                                Choose your layout and frame to get started!
+                            </p>
+
+                            {/* Layout Selection */}
+                            <div className="max-w-4xl mx-auto mb-12">
+                                <h2 className="text-3xl font-bold text-white mb-6 text-center">Choose Layout</h2>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    {layouts.map(layout => (
+                                        <div 
+                                            key={layout.id}
+                                            onClick={() => setSelectedLayout(layout.id)}
+                                            className={`bg-white bg-opacity-10 backdrop-blur-lg rounded-xl p-6 cursor-pointer transition-all transform hover:scale-105 ${
+                                                selectedLayout === layout.id ? 'ring-4 ring-white bg-opacity-20' : ''
+                                            }`}
+                                        >
+                                            <div className="text-center">
+                                                <div className="text-6xl mb-4">
+                                                    {layout.id === 'single' && '🖼️'}
+                                                    {layout.id === 'quad' && '🔲'}
+                                                    {layout.id === 'strip' && '📷'}
+                                                </div>
+                                                <h3 className="text-white text-xl font-bold mb-2">{layout.name}</h3>
+                                                <p className="text-gray-300">{layout.grid} Grid</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Frame Selection */}
+                            <div className="max-w-6xl mx-auto mb-12">
+                                <h2 className="text-3xl font-bold text-white mb-6 text-center">Choose Frame</h2>
+                                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                                    {frames.map(frame => (
+                                        <div 
+                                            key={frame.id}
+                                            onClick={() => setSelectedFrame(frame.id)}
+                                            className={`bg-white bg-opacity-10 backdrop-blur-lg rounded-xl p-4 cursor-pointer transition-all transform hover:scale-105 ${
+                                                selectedFrame === frame.id ? 'ring-4 ring-white bg-opacity-20' : ''
+                                            }`}
+                                        >
+                                            <div className="text-center">
+                                                <div className={`w-16 h-12 mx-auto mb-3 bg-gray-300 rounded ${frame.class}`} style={{transform: 'scale(0.5)'}}></div>
+                                                <p className="text-white text-sm font-medium">{frame.name}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Start Button */}
+                            <div className="text-center">
+                                <button
+                                    onClick={startPhotoSession}
+                                    className="bg-gradient-to-r from-pink-500 to-purple-600 text-white px-12 py-4 rounded-full font-bold text-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all"
+                                >
+                                    🚀 Start Photo Session
+                                </button>
+                                
+                                {photos.length > 0 && (
+                                    <button
+                                        onClick={() => setCurrentScreen('gallery')}
+                                        className="ml-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-8 py-4 rounded-full font-bold text-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all"
+                                    >
+                                        🖼️ View Gallery ({photos.length})
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Camera Screen
+            if (currentScreen === 'camera') {
+                return (
+                    <div className="min-h-screen gradient-bg">
+                        <div className="container mx-auto px-4 py-8">
+                            <div className="flex justify-between items-center mb-6">
+                                <button
+                                    onClick={() => setCurrentScreen('home')}
+                                    className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-full transition-all"
+                                >
+                                    ← Back to Home
+                                </button>
+                                <h1 className="text-3xl font-bold text-white text-center">
+                                    📸 Photo Session ({getCurrentLayoutProgress()})
+                                </h1>
+                                <button
+                                    onClick={() => setCurrentScreen('gallery')}
+                                    className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-full transition-all"
+                                >
+                                    🖼️ Gallery ({photos.length})
+                                </button>
+                            </div>
+
                             <div className="max-w-4xl mx-auto">
                                 <div className="relative bg-black rounded-2xl overflow-hidden shadow-2xl mb-6">
+                                    {countdown > 0 && (
+                                        <div className="absolute inset-0 flex items-center justify-center z-20 bg-black bg-opacity-50">
+                                            <div className="countdown">{countdown}</div>
+                                        </div>
+                                    )}
+                                    
                                     <video
                                         ref={videoRef}
-                                        className="w-full h-auto"
+                                        className={`w-full h-auto ${selectedFrame !== 'none' ? frames.find(f => f.id === selectedFrame)?.class : ''}`}
                                         style={{ 
                                             minHeight: '400px',
                                             transform: 'scaleX(-1)',
@@ -162,8 +407,13 @@
                                             {filters.find(f => f.name === currentFilter)?.label}
                                         </div>
                                     )}
+
+                                    <div className="absolute top-4 right-4 bg-black bg-opacity-60 text-white px-3 py-1 rounded-full text-sm">
+                                        1080p • {layouts.find(l => l.id === selectedLayout)?.name}
+                                    </div>
                                 </div>
 
+                                {/* Filter Selection */}
                                 <div className="mb-6">
                                     <h3 className="text-white text-lg font-semibold mb-3">Choose Filter:</h3>
                                     <div className="flex flex-wrap gap-2 justify-center">
@@ -183,140 +433,194 @@
                                     </div>
                                 </div>
 
+                                {/* Controls */}
                                 <div className="flex justify-center gap-4 mb-6">
                                     <button
-                                        onClick={capturePhoto}
-                                        disabled={!isStreaming}
-                                        className="bg-pink-500 hover:bg-pink-600 text-white px-6 py-3 rounded-full font-semibold shadow-lg transition-all disabled:opacity-50"
+                                        onClick={startCountdown}
+                                        disabled={!isStreaming || countdown > 0}
+                                        className="bg-gradient-to-r from-pink-500 to-purple-600 text-white px-8 py-4 rounded-full font-bold text-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all disabled:opacity-50 disabled:transform-none"
                                     >
-                                        📷 Take Photo
-                                    </button>
-                                    
-                                    <button
-                                        onClick={() => setShowGallery(true)}
-                                        className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-full font-semibold shadow-lg transition-all"
-                                    >
-                                        🖼️ Gallery ({photos.length})
+                                        📷 {capturedPhotos.length === 0 ? 'Take Photo' : `Take Photo ${capturedPhotos.length + 1}`}
                                     </button>
                                 </div>
 
-                                {photos.length > 0 && (
+                                {/* Progress for multi-photo layouts */}
+                                {capturedPhotos.length > 0 && (
                                     <div className="bg-white bg-opacity-10 backdrop-blur-lg rounded-xl p-6">
-                                        <h3 className="text-white text-lg font-semibold mb-4">Recent Photos:</h3>
+                                        <h3 className="text-white text-lg font-semibold mb-4">Session Progress:</h3>
                                         <div className="flex gap-4 overflow-x-auto pb-2">
-                                            {photos.slice(0, 5).map(photo => (
-                                                <div key={photo.id} className="flex-shrink-0">
+                                            {capturedPhotos.map((photo, index) => (
+                                                <div key={index} className="flex-shrink-0">
                                                     <img
-                                                        src={photo.url}
-                                                        alt={photo.name}
-                                                        className="w-20 h-20 object-cover rounded-lg shadow-md hover:shadow-lg cursor-pointer"
-                                                        onClick={() => setShowGallery(true)}
+                                                        src={photo}
+                                                        alt={`Captured ${index + 1}`}
+                                                        className="w-20 h-20 object-cover rounded-lg shadow-md"
                                                     />
+                                                </div>
+                                            ))}
+                                            {Array.from({ length: layouts.find(l => l.id === selectedLayout).photos - capturedPhotos.length }).map((_, index) => (
+                                                <div key={`empty-${index}`} className="flex-shrink-0 w-20 h-20 bg-gray-600 rounded-lg flex items-center justify-center">
+                                                    <span className="text-gray-400 text-sm">+</span>
                                                 </div>
                                             ))}
                                         </div>
                                     </div>
                                 )}
                             </div>
+                        </div>
+                        <canvas ref={canvasRef} style={{ display: 'none' }} />
+                    </div>
+                );
+            }
+
+            // Gallery Screen
+            return (
+                <div className="min-h-screen gradient-bg">
+                    <div className="container mx-auto px-4 py-8">
+                        <div className="flex justify-between items-center mb-6">
+                            <button
+                                onClick={() => setCurrentScreen('home')}
+                                className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-full transition-all"
+                            >
+                                🏠 Home
+                            </button>
+                            <h2 className="text-3xl font-bold text-white">🖼️ Photo Gallery</h2>
+                            <button
+                                onClick={() => setCurrentScreen('camera')}
+                                className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-full transition-all"
+                            >
+                                📷 Take More Photos
+                            </button>
+                        </div>
+
+                        {photos.length === 0 ? (
+                            <div className="text-center text-white py-16">
+                                <div className="text-8xl mb-4">📷</div>
+                                <p className="text-2xl mb-2">No photos yet</p>
+                                <p className="opacity-75 text-lg">Start your first photo session!</p>
+                            </div>
                         ) : (
-                            <div className="max-w-6xl mx-auto">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-2xl font-bold text-white">Photo Gallery</h2>
-                                    <button
-                                        onClick={() => setShowGallery(false)}
-                                        className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-full font-medium shadow-lg transition-all"
-                                    >
-                                        ↩️ Back to Camera
-                                    </button>
-                                </div>
-
-                                {photos.length === 0 ? (
-                                    <div className="text-center text-white py-16">
-                                        <div className="text-6xl mb-4">📷</div>
-                                        <p className="text-xl mb-2">No photos yet</p>
-                                        <p className="opacity-75">Take your first photo to get started!</p>
-                                    </div>
-                                ) : (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                                        {photos.map(photo => (
-                                            <div key={photo.id} className="bg-white bg-opacity-10 backdrop-blur-lg rounded-xl overflow-hidden shadow-lg hover:shadow-xl transition-all">
-                                                <img
-                                                    src={photo.url}
-                                                    alt={photo.name}
-                                                    className="w-full h-48 object-cover"
-                                                />
-                                                <div className="p-4">
-                                                    {editingPhoto === photo.id ? (
-                                                        <div className="mb-3">
-                                                            <input
-                                                                type="text"
-                                                                value={newPhotoName}
-                                                                onChange={(e) => setNewPhotoName(e.target.value)}
-                                                                placeholder={photo.name}
-                                                                className="w-full px-2 py-1 rounded bg-white bg-opacity-20 text-white placeholder-gray-300 border border-white border-opacity-30"
-                                                            />
-                                                            <div className="flex gap-2 mt-2">
-                                                                <button
-                                                                    onClick={() => updatePhotoName(photo.id, newPhotoName || photo.name)}
-                                                                    className="text-green-400 hover:text-green-300 text-sm"
-                                                                >
-                                                                    Save
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => {
-                                                                        setEditingPhoto(null);
-                                                                        setNewPhotoName('');
-                                                                    }}
-                                                                    className="text-gray-400 hover:text-gray-300 text-sm"
-                                                                >
-                                                                    Cancel
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="mb-3">
-                                                            <h3 className="text-white font-semibold text-lg">{photo.name}</h3>
-                                                            <p className="text-gray-300 text-sm">{photo.timestamp}</p>
-                                                            <p className="text-gray-400 text-xs">
-                                                                {photo.filter !== 'none' && `${filters.find(f => f.name === photo.filter)?.label} • `}
-                                                                {photo.size}KB
-                                                            </p>
-                                                        </div>
-                                                    )}
-
-                                                    <div className="flex gap-2 text-sm">
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                                {photos.map(photo => (
+                                    <div key={photo.id} className="bg-white bg-opacity-10 backdrop-blur-lg rounded-xl overflow-hidden shadow-lg hover:shadow-xl transform hover:scale-105 transition-all">
+                                        <div 
+                                            className="cursor-pointer"
+                                            onClick={() => setPreviewPhoto(photo)}
+                                        >
+                                            <img
+                                                src={photo.url}
+                                                alt={photo.name}
+                                                className={`w-full h-48 object-cover ${photo.frame !== 'none' ? frames.find(f => f.id === photo.frame)?.class : ''}`}
+                                            />
+                                        </div>
+                                        <div className="p-4">
+                                            {editingPhoto === photo.id ? (
+                                                <div className="mb-3">
+                                                    <input
+                                                        type="text"
+                                                        value={newPhotoName}
+                                                        onChange={(e) => setNewPhotoName(e.target.value)}
+                                                        placeholder={photo.name}
+                                                        className="w-full px-2 py-1 rounded bg-white bg-opacity-20 text-white placeholder-gray-300 border border-white border-opacity-30"
+                                                    />
+                                                    <div className="flex gap-2 mt-2">
                                                         <button
-                                                            onClick={() => downloadPhoto(photo)}
-                                                            className="text-blue-400 hover:text-blue-300"
+                                                            onClick={() => updatePhotoName(photo.id, newPhotoName || photo.name)}
+                                                            className="text-green-400 hover:text-green-300 text-sm"
                                                         >
-                                                            ⬇️ Download
+                                                            Save
                                                         </button>
                                                         <button
                                                             onClick={() => {
-                                                                setEditingPhoto(photo.id);
-                                                                setNewPhotoName(photo.name);
+                                                                setEditingPhoto(null);
+                                                                setNewPhotoName('');
                                                             }}
-                                                            className="text-yellow-400 hover:text-yellow-300"
+                                                            className="text-gray-400 hover:text-gray-300 text-sm"
                                                         >
-                                                            ✏️ Rename
-                                                        </button>
-                                                        <button
-                                                            onClick={() => deletePhoto(photo.id)}
-                                                            className="text-red-400 hover:text-red-300"
-                                                        >
-                                                            🗑️ Delete
+                                                            Cancel
                                                         </button>
                                                     </div>
                                                 </div>
+                                            ) : (
+                                                <div className="mb-3">
+                                                    <h3 className="text-white font-semibold text-lg">{photo.name}</h3>
+                                                    <p className="text-gray-300 text-sm">{photo.timestamp}</p>
+                                                    <p className="text-gray-400 text-xs">
+                                                        {photo.filter !== 'none' && `${filters.find(f => f.name === photo.filter)?.label} • `}
+                                                        {photo.frame !== 'none' && `${frames.find(f => f.id === photo.frame)?.name} • `}
+                                                        1080p • {photo.size}KB
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            <div className="flex gap-2 text-sm">
+                                                <button
+                                                    onClick={() => downloadPhoto(photo)}
+                                                    className="text-blue-400 hover:text-blue-300"
+                                                >
+                                                    ⬇️ Download
+                                                </button>
+                                                <button
+                                                    onClick={() => {
+                                                        setEditingPhoto(photo.id);
+                                                        setNewPhotoName(photo.name);
+                                                    }}
+                                                    className="text-yellow-400 hover:text-yellow-300"
+                                                >
+                                                    ✏️ Rename
+                                                </button>
+                                                <button
+                                                    onClick={() => deletePhoto(photo.id)}
+                                                    className="text-red-400 hover:text-red-300"
+                                                >
+                                                    🗑️ Delete
+                                                </button>
                                             </div>
-                                        ))}
+                                        </div>
                                     </div>
-                                )}
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Photo Preview Modal */}
+                        {previewPhoto && (
+                            <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50 p-4" onClick={() => setPreviewPhoto(null)}>
+                                <div className="max-w-4xl max-h-full overflow-auto bg-white bg-opacity-10 backdrop-blur-lg rounded-xl p-6" onClick={e => e.stopPropagation()}>
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h3 className="text-white text-xl font-bold">{previewPhoto.name}</h3>
+                                        <button
+                                            onClick={() => setPreviewPhoto(null)}
+                                            className="text-white hover:text-gray-300 text-2xl"
+                                        >
+                                            ✕
+                                        </button>
+                                    </div>
+                                    <img
+                                        src={previewPhoto.url}
+                                        alt={previewPhoto.name}
+                                        className={`max-w-full max-h-96 object-contain mx-auto ${previewPhoto.frame !== 'none' ? frames.find(f => f.id === previewPhoto.frame)?.class : ''}`}
+                                    />
+                                    <div className="mt-4 text-center">
+                                        <button
+                                            onClick={() => downloadPhoto(previewPhoto)}
+                                            className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-full mr-2"
+                                        >
+                                            ⬇️ Download
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                deletePhoto(previewPhoto.id);
+                                                setPreviewPhoto(null);
+                                            }}
+                                            className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-full"
+                                        >
+                                            🗑️ Delete
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         )}
                     </div>
-
-                    <canvas ref={canvasRef} style={{ display: 'none' }} />
                 </div>
             );
         };
